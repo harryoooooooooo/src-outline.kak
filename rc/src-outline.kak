@@ -13,6 +13,11 @@ hook global KakBegin .* %sh{
 
 provide-module src-outline %{
 
+declare-option -docstring "name of the client in which utilities display information" \
+    str toolsclient
+declare-option -docstring "name of the client in which all source code jumps will be executed" \
+    str jumpclient
+
 define-command -docstring '
 src-outline: Show the outline of the source file.
 Press <ret> to jump to the line.' \
@@ -69,7 +74,7 @@ Press <ret> to jump to the line.' \
         column -t --tree-id 2 --tree-parent 3 --tree 5 -H 1,2,3 -s $'\t' |
         sed 's/ *$//g' > ${output} 2>&1 & ) > /dev/null 2>&1 < /dev/null
 
-    printf %s\\n "evaluate-commands %{
+    printf %s\\n "evaluate-commands -try-client %opt{toolsclient} %{
         edit! -fifo ${output} *src-outline*
         hook -always -once buffer BufCloseFifo .* %{ nop %sh{ rm -r $(dirname ${output}) } }
 
@@ -77,7 +82,9 @@ Press <ret> to jump to the line.' \
         hook -group src-outline-hooks buffer NormalKey <ret> %{ evaluate-commands %{
             try %{
                 execute-keys '<a-x>s^\d+<ret>'
-                evaluate-commands -verbatim -- edit -existing ${kak_buffile} %reg{0}
+                evaluate-commands -try-client %opt{jumpclient} -verbatim -- \
+                    edit -existing ${kak_buffile} %reg{0}
+                try %{ focus %opt{jumpclient} }
             }
         }}
     }"
