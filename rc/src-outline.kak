@@ -81,7 +81,7 @@ Press <ret> to jump to the line.' \
         try %{ remove-hooks buffer src-outline-hooks }
         hook -group src-outline-hooks buffer NormalKey <ret> %{ evaluate-commands %{
             try %{
-                execute-keys '<a-x>s^\d+<ret>'
+                execute-keys 'xs^\d+<ret>'
                 evaluate-commands -try-client %opt{jumpclient} -verbatim -- \
                     edit -existing ${kak_buffile} %reg{0}
                 try %{ focus %opt{jumpclient} }
