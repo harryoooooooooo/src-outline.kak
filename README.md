@@ -13,9 +13,9 @@ For archlinux users:
 sudo pacman -S ctags
 ```
 
-For Ubuntu users:
+For Debian users:
 ``` sh
-sudo apt install ctags
+sudo apt install universal-ctags
 ```
 
 ### With [plug.kak](https://github.com/andreyorst/plug.kak)
@@ -62,16 +62,4 @@ int main() {}
 ```
 
 Sample outline:
-```
-5:   (class) B                 inherits:A
-9:   ├─+(function) B
-11:  ├─+(function) bar         typeref:typename:bool
-12:  ├─+(function) operator <  typeref:typename:bool
-10:  ├─+(function) ~B
-7:   ├─-(function) foo         typeref:typename:void
-6:   └─-(member) b_            typeref:typename:bool
-16:  (function) main           typeref:typename:int
-13:  (function) operator <     typeref:typename:bool
-1:   (struct) A
-2:   └─+(member) a_            typeref:typename:int
-```
+![Sample outline](sample-outline.png)

@@ -4,8 +4,8 @@
 # It is intended to only process the output of ctags as general as possible.
 
 hook global KakBegin .* %sh{
-    if ! command -v ctags > /dev/null 2>&1; then
-        echo "echo -debug Universal Ctags is needed for src-outline command"
+    if ! command -v ctags > /dev/null 2>&1 || ! command -v readtags > /dev/null 2>&1; then
+        echo "echo -debug ctags and readtags are needed for src-outline command"
         exit
     fi
     echo "require-module src-outline"
@@ -18,72 +18,123 @@ declare-option -docstring "name of the client in which utilities display informa
 declare-option -docstring "name of the client in which all source code jumps will be executed" \
     str jumpclient
 
+add-highlighter shared/src-outline group
+add-highlighter shared/src-outline/group regex '^ *(\S+)$' 1:keyword
+add-highlighter shared/src-outline/tags regex '^ +([^\t\n]+)\t(typename:[^\t\n]+\t)?([^\t\n]+\t)?(#\d+)$' 1:variable 2:value 3:type 4:comment
+
+hook -group src-outline-syntax global WinSetOption filetype=src-outline %{
+    add-highlighter window/src-outline ref src-outline
+    hook -always -once window WinSetOption filetype=.* %{
+        remove-highlighter window/src-outline
+    }
+}
+
 define-command -docstring '
 src-outline: Show the outline of the source file.
 Press <ret> to jump to the line.' \
-    -params 0 src-outline %{ evaluate-commands %sh{
-    output=$(mktemp -d "${TMPDIR:-/tmp}"/kak-src-outline.XXXXXXXX)/fifo
-    mkfifo ${output}
-    ( ctags -f - --fields=aiKsZt --excmd=number --extras=+q "${kak_buffile}" |
-        sed -E 's/^([^\t]+\t).+(\t[0-9]+);"\t([^\t]+)/\1\3\2/g' |
-        awk -F $'\t' '{
-            line = $3
-            type = $2
-            name = $1
-            short_name = $1  # The symbol name without class/namespace-qualified
-            scope_type = ""
-            scope_name = ""
-            access = ""
-            addi = ""
-            for (i=4; i<=NF; i++) {
-                if (match($i, "^scope:[^:]+:")) {
-                    l = length("scope:")
-                    scope_type = substr($i, l+1, RLENGTH-l-1)
-                    scope_name = substr($i, RLENGTH+1)
+    -params 0..1 src-outline %{ evaluate-commands %sh{
+    buffile="${1:-${kak_buffile}}"
+    tmpdir="$(mktemp -d "${TMPDIR:-/tmp}"/kak-src-outline.XXXXXXXX)"
+    tags="${tmpdir}"/tags
+    output="${tmpdir}"/fifo
+    mkfifo "${output}"
+    ctags --fields=akKzsZSt --excmd=number -f "${tags}" "${buffile}"
 
-                    # name should have prefix "<scope_name><separator>".
-                    # Otherwise it is a line without class/namespace-qualified
-                    # and we should skip it.
-                    if (substr(name, 1, length(scope_name)) != scope_name)
-                        next
-                    short_name = substr(name, length(scope_name)+1)
-                    # We hard code some common separators here.
-                    if (!sub("^\\.", "", short_name) &&
-                        !sub("^::", "", short_name) &&
-                        !sub("^\\\\", "", short_name))
-                        next
-                } else if (match($i, "^access:")) {
-                    access = substr($i, RLENGTH+1)
-                    if      (access == "private")   access = "-"
-                    else if (access == "protected") access = "!"
-                    else if (access == "public")    access = "+"
-                    else {
-                        access = ""
-                        addi = addi "\t" $i
-                    }
-                } else {
-                    addi = addi "\t" $i
+    sortexp="(<or> "
+    for g in "scope" "access" "kind" "name"; do
+        sortexp="${sortexp}"'(<> (if (eq? $'"${g}"' #f) "" $'"${g}"') (if (eq? &'"${g}"' #f) "" &'"${g}"'))'
+    done
+    sortexp="${sortexp})"
+
+    ( readtags -t "${tags}" -S "${sortexp}" -el | awk -F $'\t' '
+        BEGIN {
+            prev_scope = ""
+            prev_access = ""
+            prev_kind = ""
+            first_out = 1
+        }
+        {
+            name = $1
+            line = $3; line = substr(line, 0, length(line)-2)
+
+            kind = ""
+            scope = ""
+            access = ""
+            typeref = ""
+            signature = ""
+            for (i=4; i<=NF; i++) {
+                if        (sub("^kind:", "", $i)) {
+                    kind = $i
+                } else if (sub("^scope:", "", $i)) {
+                    scope = $i
+                } else if (sub("^access:", "", $i)) {
+                    access = $i
+                } else if (sub("^typeref:", "", $i)) {
+                    typeref = $i
+                } else if (sub("^signature:", "", $i)) {
+                    signature = $i
                 }
             }
-            id = "(" type ") " name
-            scope_id = "(" scope_type ") " scope_name
-            sorter = "[" access "]" "(" type ")" "{" short_name "}"
-            pretty_name = access "(" type ") " short_name
-            print sorter "\t" id "\t" scope_id "\t" line ":\t" pretty_name addi}' |
-        LANG=C sort |
-        column -t --tree-id 2 --tree-parent 3 --tree 5 -H 1,2,3 -s $'\t' |
-        sed 's/ *$//g' > ${output} 2>&1 & ) > /dev/null 2>&1 < /dev/null
 
+            if (prev_scope != scope || prev_access != access || prev_kind != kind || first_out) {
+                start_print = 0
+                if (!first_out) {
+                    print ""
+                } else {
+                    start_print = 1
+                }
+                first_out = 0
+                indent = ""
+
+                if (prev_scope != scope || start_print) {
+                    start_print = 1
+                    if (scope != "")
+                        print indent scope
+                    prev_scope = scope
+                }
+                if (scope != "")
+                    indent = indent " "
+
+                if (prev_access != access || start_print) {
+                    start_print = 1
+                    if (access != "")
+                        print indent access
+                    prev_access = access
+                }
+                if (access != "")
+                    indent = indent " "
+
+                if (prev_kind != kind || start_print) {
+                    start_print = 1
+                    if (kind != "")
+                        print indent kind
+                    prev_kind = kind
+                }
+                if (kind != "")
+                    indent = indent " "
+            }
+            out = indent name "\t"
+            if (typeref != "")
+                out = out typeref "\t"
+            if (signature != "")
+                out = out signature "\t"
+            print out "#" line
+        }
+    ' > ${output} 2>&1 & ) > /dev/null 2>&1 < /dev/null
+
+    valid_buffile="$(tr -c '[:alnum:]' '-' <<<"${buffile}" | sed 's/-\+/-/g; s/^-//; s/-$//')"
     printf %s\\n "evaluate-commands -try-client %opt{toolsclient} %{
-        edit! -fifo ${output} *src-outline*
-        hook -always -once buffer BufCloseFifo .* %{ nop %sh{ rm -r $(dirname ${output}) } }
+        edit! -fifo ${output} *src-outline-${valid_buffile}*
+        set-option buffer filetype src-outline
+        set-option window tabstop 1
+        hook -always -once buffer BufCloseFifo .* %{ nop %sh{ rm -r ${tmpdir} } }
 
-        try %{ remove-hooks buffer src-outline-hooks }
-        hook -group src-outline-hooks buffer NormalKey <ret> %{ evaluate-commands %{
+        try %{ remove-hooks buffer src-outline-hooks-${valid_buffile} }
+        hook -group src-outline-hooks-${valid_buffile} buffer NormalKey <ret> %{ evaluate-commands %{
             try %{
-                execute-keys 'xs^\d+<ret>'
+                execute-keys 'xs\d+$<ret>'
                 evaluate-commands -try-client %opt{jumpclient} -verbatim -- \
-                    edit -existing ${kak_buffile} %reg{0}
+                    edit -existing ${buffile} %reg{0}
                 try %{ focus %opt{jumpclient} }
             }
         }}
